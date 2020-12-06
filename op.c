@@ -1,27 +1,50 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 
-
+//  // DATA
 struct termios orig_termios;
+
+//  // TERMINAL
+void die( const char *s)
+{
+    perror(s);
+    exit(1);
+}
+
 void disableRawMode()
 {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1)
+        die("tcsetattr");
 }
 
 void enableRawMode()
 {
-    tcgetattr(STDIN_FILENO, &orig_termios);
+    if(tcgetattr(STDIN_FILENO, &orig_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
 
     struct termios raw = orig_termios;
-    raw.c_lflag &= ~( ECHO | ICANON ); /* ICANON comes from termios. It is a local flag in the c_lflag field.*/
 
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);   
+    /* Turn off all commands for now. Flags from termios, refer to them on info about flags */
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= ~( OPOST );
+    raw.c_cflag |= (CS8);
+    raw.c_lflag &= ~( ECHO | ICANON | IEXTEN | ISIG );
+    /* VMIN and VTIME come from termios.h. They are indexes into the C_CC field, which are control characters.
+        An array of bytes that control various terminal settings.
+        VMIN value sets min number of bytes of input needed before read() can return. We set to 0 so it returns immediately.
+        VTIME value sets the max amount of time to wait before read() returns. It is in tenths of a second, so we have 1/10 of a second.
+     */
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 1;
+
+    if( tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");   
 }
 
+//  //INIT
 int main()
 {
     /**
@@ -39,14 +62,17 @@ int main()
      * 
     */
     enableRawMode();
-    char c;
-    while (read( STDIN_FILENO, &c, 1) == 1 && c != 'q') /* Read 1 byte from standard input into variable c until none are left to read. */
+    while(1)
     {
-        if( iscntrl( c )) {
-            printf("%d\n", c);
+        char c = '\0';
+        if(read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) die("read");
+        if( iscntrl( c )) { /* tests whether a character is a control character. (nonprintable character) */
+            printf("%d\r\n", c);
         } else {
-            printf("%d ('%c')\n", c, c);
+            printf("%d ('%d')\r\n", c, c); /* writes out the number of bytes directly as a character */
         }
+        if( c == 'q') break;
     }
+   
     return 0;
 }
