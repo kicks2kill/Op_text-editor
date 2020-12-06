@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
@@ -48,7 +49,7 @@ void enableRawMode()
     /* Turn off all commands for now. Flags from termios, refer to them on info about flags */
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     raw.c_oflag &= ~( OPOST );
-    raw.c_cflag |= (CS8);
+    raw.c_cflag |= ( CS8 );
     raw.c_lflag &= ~( ECHO | ICANON | IEXTEN | ISIG );
     /* VMIN and VTIME come from termios.h. They are indexes into the C_CC field, which are control characters.
         An array of bytes that control various terminal settings.
@@ -76,19 +77,30 @@ char editorReadKey()
 
 int getCursorPosition(int *rows, int *cols)
 {
+    char buf[32];
+    unsigned int i = 0;
+
+    /* when we print out to buffer, we don't want to print '\x1b' char, because the terminal would interpret it as an escape sequence.
+       So we skip the first char in buf by passing &buf[1] to printf. Since it expects strings to end with a 0 byte, we assign '\0' to final byte of buf 
+     */
     if(write( STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
 
-    printf("\r\n");
-    char c;
-    while( read( STDIN_FILENO, &c, 1) == 1) {
-        if(iscntrl( c )){
-            printf("%d\r\n", c);
-        } else {
-            printf("%d ('%c')\r\n", c, c);
-        }
+    while( i < sizeof(buf) - 1) {
+        if( read( STDIN_FILENO, &buf[i], 1) != 1) break;
+        if( buf[i] == 'R') break;
+        i++;
     }
-    editorReadKey();
-    return -1;
+
+    /**
+     * Since we made sure it responds with an esacpe sequence, we can pass a pointer to the 3rd char of buf to sscanf() (skipping 'x1b' and '['
+     * So we are passing a string of the form 24;80 to sscanf() ).
+     */ 
+    buf[i] = "\0";
+    if( buf[0] != '\x1b' || buf[1] != '[' ) return -1;
+    if( sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+
+    return 0;
+
 }
 
 /* ioctl() will place the number of columns wide and number of rows high the terminal is into the given winsize struct. */
@@ -96,7 +108,7 @@ int getWindowSize(int *rows, int *cols)
 {
     struct winsize ws;
 
-    if(1 || ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
         if( write( STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
             return getCursorPosition( rows, cols);
         }
@@ -107,6 +119,32 @@ int getWindowSize(int *rows, int *cols)
         return 0;
     }   
 }
+
+struct _buf {
+    char *b;
+    int len;
+};
+
+/* to append a string s to _buf, the first thing we do is make sure we allocate enough memory.
+    We ask realloc to give us a block of memory that is the size of cuirrent string plus what we are appending
+    (which may use free() to get rid of current block of memory and reallocate)
+    then we use memcpy to copy string s after the end of the current data in the buffer, then update the pointer and length of _buf to new values. */
+
+void bufAppend( struct _buf *b, const char *s, int len)
+{
+    char *new = realloc(b->b, b->len + len);
+    
+    if(new == NULL) return;
+    memcpy(&new[b->len], s, len);
+    b->b = new;
+    b->len += len;
+}
+
+void bufFree(struct _buf *b) {
+    free(b->b);
+}
+
+#define BUF_INIT {NULL, 0}
 
 
 //  //  INPUT
@@ -128,7 +166,11 @@ void editorDrawRows()
 {
     int y;
     for( y = 0; y < E.screenrows; y++){
-        write(STDOUT_FILENO,"~\r\n", 3);
+        write(STDOUT_FILENO,"~", 1);
+
+        if( y < E.screenrows - 1) {
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
     }
 }
 
