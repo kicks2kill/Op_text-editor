@@ -73,21 +73,41 @@ char editorReadKey()
     return c;
 }
 
+
+int getCursorPosition(int *rows, int *cols)
+{
+    if(write( STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+
+    printf("\r\n");
+    char c;
+    while( read( STDIN_FILENO, &c, 1) == 1) {
+        if(iscntrl( c )){
+            printf("%d\r\n", c);
+        } else {
+            printf("%d ('%c')\r\n", c, c);
+        }
+    }
+    editorReadKey();
+    return -1;
+}
+
 /* ioctl() will place the number of columns wide and number of rows high the terminal is into the given winsize struct. */
 int getWindowSize(int *rows, int *cols)
 {
     struct winsize ws;
 
-    if( ioctl( STDOUT_FILENO, TIOCGWINSZ, &ws ) == -1 || ws.ws_col == 0)
-        return -1;
+    if(1 || ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        if( write( STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+            return getCursorPosition( rows, cols);
+        }
     else
     {
         *cols = ws.ws_col;
         *rows = ws.ws_row;
         return 0;
-    }
-    
+    }   
 }
+
 
 //  //  INPUT
 void editorProcessKeypress()
@@ -107,7 +127,7 @@ void editorProcessKeypress()
 void editorDrawRows()
 {
     int y;
-    for( y = 0; y < 24; y++){
+    for( y = 0; y < E.screenrows; y++){
         write(STDOUT_FILENO,"~\r\n", 3);
     }
 }
