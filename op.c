@@ -162,14 +162,14 @@ void editorProcessKeypress()
 }
 
 //  // OUTPUT
-void editorDrawRows()
+void editorDrawRows(struct _buf *b)
 {
     int y;
     for( y = 0; y < E.screenrows; y++){
-        write(STDOUT_FILENO,"~", 1);
+        bufAppend(b, "~", 1);
 
         if( y < E.screenrows - 1) {
-            write(STDOUT_FILENO, "\r\n", 2);
+            bufAppend( b, "\r\n", 2);
         }
     }
 }
@@ -183,11 +183,15 @@ void editorRefreshScreen()
             Escape sequences instruct the terminal to do various text formatting tasks.
         The command J (Erase In Display) to clear the screen.
     */
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H",3);
+    struct _buf b = BUF_INIT;
+    bufAppend(&b, "\x1b[2J", 4);
+    bufAppend(&b, "\x1b[H", 3);
 
-    editorDrawRows();
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    editorDrawRows(&b);
+    bufAppend(&b, "x1b[H", 3);
+
+    write(STDOUT_FILENO, b.b, b.len);
+    bufFree(&b);
 }
 
 
