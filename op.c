@@ -5,6 +5,14 @@
 #include <termios.h>
 #include <unistd.h>
 
+//  // DEFINES
+
+/*  CTRL_KEY macro bitwise-AND a character with value 00011111.
+    In other words, it sets the 3 upper bits of the character to 0.
+    This mirrors what the ctrl-key does in the terminal: it strips 5 and 6 from whatever key you press in combination with CTRL, and sends that.
+*/
+#define CTRL_KEY(k) ((k) & 0x1f) 
+
 //  // DATA
 struct termios orig_termios;
 
@@ -44,6 +52,30 @@ void enableRawMode()
     if( tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");   
 }
 
+/* wait for one keypress and return it. */
+char editorReadKey() 
+{
+    int nread;
+    char c;
+    while ((nread == read(STDIN_FILENO, &c, 1)) != 1)
+    {
+        if(nread == -1 && errno != EAGAIN) die("read");
+    }
+    return c;
+}
+
+//  //  INPUT
+void editorProcessKeypress()
+{
+    char c = editorReadKey();
+
+    switch(c) {
+        case CTRL_KEY('q'):
+            exit(0);
+            break;
+    }
+}
+
 //  //INIT
 int main()
 {
@@ -64,14 +96,7 @@ int main()
     enableRawMode();
     while(1)
     {
-        char c = '\0';
-        if(read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) die("read");
-        if( iscntrl( c )) { /* tests whether a character is a control character. (nonprintable character) */
-            printf("%d\r\n", c);
-        } else {
-            printf("%d ('%d')\r\n", c, c); /* writes out the number of bytes directly as a character */
-        }
-        if( c == 'q') break;
+        editorProcessKeypress(); // waits for a keypress, and handles it.
     }
    
     return 0;
