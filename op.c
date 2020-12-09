@@ -13,15 +13,28 @@
     In other words, it sets the 3 upper bits of the character to 0.
     This mirrors what the ctrl-key does in the terminal: it strips 5 and 6 from whatever key you press in combination with CTRL, and sends that.
 */
+
+#define OP_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k) & 0x1f) 
+
 
 //  // DATA
 struct editorConfig {
+    int cx, cy;
     int screenrows;
     int screencols;
     struct termios orig_termios;
 };
 struct editorConfig E;
+
+/* we need to have a representation for arrow keys that does not conflict with wasd
+    We will need to give them a larger int value that is out of range of a char and change all to type int that store keypresses. */
+enum editorKey {
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+};
 
 //  // TERMINAL
 void die( const char *s)
@@ -63,7 +76,7 @@ void enableRawMode()
 }
 
 /* wait for one keypress and return it. */
-char editorReadKey() 
+int editorReadKey() 
 {
     int nread;
     char c;
@@ -71,7 +84,27 @@ char editorReadKey()
     {
         if(nread == -1 && errno != EAGAIN) die("read");
     }
-    return c;
+    /* We need to imeediately read two more bytes into the seq buffer if we read an escape character.
+        We make the seq buffer 3 bytes long because we will be handling longer escape sequences soon.
+        We aliased the arrow keys to wasd keys. */
+    if(c == '\x1b'){
+        char seq[3];
+
+        if(read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if(read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+        if(seq[0] == '[') {
+            switch(seq[1]){
+                case 'A' : return ARROW_UP;
+                case 'B' : return ARROW_DOWN;
+                case 'C' : return ARROW_RIGHT;
+                case 'D' : return ARROW_LEFT;
+            }
+        }
+        return '\x1b';
+    } else {
+        return c;
+    }
 }
 
 
@@ -150,13 +183,38 @@ void bufFree(struct _buf *b) {
 //  //  INPUT
 void editorProcessKeypress()
 {
-    char c = editorReadKey();
+    int c = editorReadKey();
 
     switch(c) {
         case CTRL_KEY('q'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H",3);
             exit(0);
+            break;
+
+        case ARROW_UP:
+        case ARROW_DOWN:
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
+            editorMoveCursor(c);
+            break;
+    }
+}
+
+void editorMoveCursor(int key)
+{
+    switch(key){
+        case ARROW_LEFT:
+            E.cx--;
+            break;
+        case ARROW_RIGHT:
+            E.cx++;
+            break;
+        case ARROW_UP:
+            E.cy--;
+            break;
+        case ARROW_DOWN:
+            E.cy++;
             break;
     }
 }
@@ -166,8 +224,24 @@ void editorDrawRows(struct _buf *b)
 {
     int y;
     for( y = 0; y < E.screenrows; y++){
-        bufAppend(b, "~", 1);
-
+        if( y == E.screenrows / 3){
+            char welcome[80];
+            int welcomelen = snprintf(welcome, sizeof(welcome),
+                "Op Editor -- version %s", OP_VERSION);
+            if( welcomelen > E.screencols) welcomelen = E.screencols;
+            int padding = (E.screencols - welcomelen) / 2;
+            /* We centered the string by dividing the screen width by 2 and then subtracting half of the strings length from that. */
+            if(padding) {
+                bufAppend(b, "~", 1);
+                padding--;
+            }
+            while(padding--) bufAppend(b, " ", 1);
+            bufAppend(b, welcome, welcomelen);
+        }else {
+            bufAppend(b, "~", 1);
+        } 
+        /* command K stands for Erase In line. It's argument ( [2J ) is analogous to the J command that we removed from editorRefreshScreen() */
+        bufAppend(b,"\x1b[K", 3);
         if( y < E.screenrows - 1) {
             bufAppend( b, "\r\n", 2);
         }
@@ -182,13 +256,22 @@ void editorRefreshScreen()
         We are writing an escape sequence, which always start with the escape character followed by a [
             Escape sequences instruct the terminal to do various text formatting tasks.
         The command J (Erase In Display) to clear the screen.
+        The command h stands for Set Mode
+        the command l stands for Reset mode
+        ?25 is for hiding/show the cursor (?)
     */
     struct _buf b = BUF_INIT;
-    bufAppend(&b, "\x1b[2J", 4);
+    bufAppend(&b, "\x1b[?25l", 6);
     bufAppend(&b, "\x1b[H", 3);
 
     editorDrawRows(&b);
-    bufAppend(&b, "x1b[H", 3);
+
+    char buf[32];
+    /* add 1 to E.cy and E.cx to convert from 0-index values to 1-indexed values.  */
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+    bufAppend(&b, buf, strlen(buf));
+
+    bufAppend(&b, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, b.b, b.len);
     bufFree(&b);
@@ -198,7 +281,9 @@ void editorRefreshScreen()
 //  //INIT
 
 void initEditor()
-{
+{   /* cx and cy will respond to horizontal and vertical coordinates of the cursor, respectively */
+    E.cx = 0;
+    E.cy = 0;
     if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
